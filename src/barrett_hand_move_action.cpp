@@ -97,12 +97,12 @@ public:
 		TaskContext(name, PreOperational),
 		BH_DOF(4)
 	{
-		this->ports()->addPort("status_in", port_status_in_);
-		this->ports()->addPort("q_out", port_q_out_);
-		this->ports()->addPort("v_out", port_v_out_);
-		this->ports()->addPort("t_out", port_t_out_);
-		this->ports()->addPort("mp_out", port_mp_out_);
-		this->ports()->addPort("hold_out", port_hold_out_);
+		this->ports()->addPort("status_INPORT", port_status_in_);
+		this->ports()->addPort("q_OUTPORT", port_q_out_);
+		this->ports()->addPort("v_OUTPORT", port_v_out_);
+		this->ports()->addPort("t_OUTPORT", port_t_out_);
+		this->ports()->addPort("mp_OUTPORT", port_mp_out_);
+		this->ports()->addPort("hold_OUTPORT", port_hold_out_);
 
 		as_.addPorts(this->provides());
 		as_.registerGoalCallback(boost::bind(&BarrettHandMoveAction::goalCB, this, _1));
