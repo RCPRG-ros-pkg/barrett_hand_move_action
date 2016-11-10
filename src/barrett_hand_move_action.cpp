@@ -58,7 +58,6 @@ using RTT::OutputPort;
 
 class BarrettHandMoveAction : public RTT::TaskContext {
 private:
-	const int BH_DOF;
 	enum {STATUS_OVERCURRENT1 = 0x0001, STATUS_OVERCURRENT2 = 0x0002, STATUS_OVERCURRENT3 = 0x0004, STATUS_OVERCURRENT4 = 0x0008,
 		STATUS_OVERPRESSURE1 = 0x0010, STATUS_OVERPRESSURE2 = 0x0020, STATUS_OVERPRESSURE3 = 0x0040,
 		STATUS_TORQUESWITCH1 = 0x0100, STATUS_TORQUESWITCH2 = 0x0200, STATUS_TORQUESWITCH3 = 0x0400,
@@ -71,19 +70,22 @@ private:
 	GoalHandle active_goal_;
 	barrett_hand_controller_msgs::BHMoveFeedback feedback_;
 
+    enum {DOFS=4};
 
-	Eigen::VectorXd q_out_;
-	Eigen::VectorXd v_out_;
-	Eigen::VectorXd t_out_;
+    typedef Eigen::Matrix<double, DOFS, 1> Joints;
+
+	Joints q_out_;
+	Joints v_out_;
+	Joints t_out_;
 	double mp_out_;
 	int32_t hold_out_;
 
 	uint32_t status_in_;
 	InputPort<uint32_t> port_status_in_;
 
-	OutputPort<Eigen::VectorXd> port_q_out_;
-	OutputPort<Eigen::VectorXd> port_v_out_;
-	OutputPort<Eigen::VectorXd> port_t_out_;
+	OutputPort<Joints> port_q_out_;
+	OutputPort<Joints> port_v_out_;
+	OutputPort<Joints> port_t_out_;
 	OutputPort<double> port_mp_out_;
 	OutputPort<int32_t> port_hold_out_;
 
@@ -94,8 +96,7 @@ private:
 
 public:
 	explicit BarrettHandMoveAction(const string& name):
-		TaskContext(name, PreOperational),
-		BH_DOF(4)
+		TaskContext(name, PreOperational)
 	{
 		this->ports()->addPort("status_INPORT", port_status_in_);
 		this->ports()->addPort("q_OUTPORT", port_q_out_);
@@ -124,14 +125,6 @@ public:
 			dof_map[prefix_ + "_HandFingerTwoKnuckleTwoJoint"] = 1;
 			dof_map[prefix_ + "_HandFingerThreeKnuckleTwoJoint"] = 2;
 			dof_map[prefix_ + "_HandFingerOneKnuckleOneJoint"] = 3;
-
-			q_out_.resize(BH_DOF);
-			v_out_.resize(BH_DOF);
-			t_out_.resize(BH_DOF);
-
-			port_q_out_.setDataSample(q_out_);
-			port_v_out_.setDataSample(v_out_);
-			port_t_out_.setDataSample(t_out_);
 
 			feedback_.name.resize(4);
 			feedback_.name[0] = prefix_ + "_HandFingerOneKnuckleTwoJoint";
@@ -229,7 +222,7 @@ private:
 
 		Goal g = gh.getGoal();
 
-		if (g->name.size() != BH_DOF || g->q.size() != BH_DOF || g->v.size() != BH_DOF || g->t.size() != BH_DOF)
+		if (g->name.size() != DOFS || g->q.size() != DOFS || g->v.size() != DOFS || g->t.size() != DOFS)
 		{
 			barrett_hand_controller_msgs::BHMoveResult res;
 			res.error_code = barrett_hand_controller_msgs::BHMoveResult::INVALID_GOAL;
