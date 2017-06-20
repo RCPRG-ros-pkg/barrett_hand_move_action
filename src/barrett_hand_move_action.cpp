@@ -161,11 +161,11 @@ public:
 		return ((status & STATUS_IDLE1) != 0) && ((status & STATUS_IDLE2) != 0) && ((status & STATUS_IDLE3) != 0) && ((status & STATUS_IDLE4) != 0);
 	}
 
-	void updateHook() {
-		// ignore the status at the beginning of the movement
-		action_start_counter_--;
-		if (action_start_counter_ > 0)
-			return;
+    void updateHook() {
+        // ignore the status at the beginning of the movement
+        if (action_start_counter_ > 0)
+            action_start_counter_--;
+            return;
 
 		if (port_status_in_.readNewest(status_in_) == RTT::NewData && active_goal_.isValid() && (active_goal_.getGoalStatus().status == actionlib_msgs::GoalStatus::ACTIVE)) {
 			ros::Time now = rtt_rosclock::host_now();
@@ -191,6 +191,7 @@ public:
 			active_goal_.publishFeedback(feedback_);
 
 			if (allPucksIdle(status_in_)) {
+                std::cout << "all pucks idle" << std::endl;
 				barrett_hand_controller_msgs::BHMoveResult res;
 				res.error_code = barrett_hand_controller_msgs::BHMoveResult::SUCCESSFUL;
 				res.torque_switch.resize(4);
@@ -252,7 +253,7 @@ private:
 		port_hold_out_.write(hold_out_);
 		port_q_out_.write(q_out_);
 
-		action_start_counter_ = 10;
+		action_start_counter_ = 20;
 		gh.setAccepted();
 		active_goal_ = gh;
 	}
