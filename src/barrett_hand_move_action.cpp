@@ -25,8 +25,8 @@
  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "barrett_hand_controller_msgs/BHMoveAction.h"
-#include "barrett_hand_controller_msgs/BHMoveGoal.h"
+#include "barrett_hand_action_msgs/BHMoveAction.h"
+#include "barrett_hand_action_msgs/BHMoveGoal.h"
 
 #include <rtt/TaskContext.hpp>
 #include <rtt/Port.hpp>
@@ -63,12 +63,12 @@ private:
 		STATUS_TORQUESWITCH1 = 0x0100, STATUS_TORQUESWITCH2 = 0x0200, STATUS_TORQUESWITCH3 = 0x0400,
 		STATUS_IDLE1 = 0x1000, STATUS_IDLE2 = 0x2000, STATUS_IDLE3 = 0x4000, STATUS_IDLE4 = 0x8000 };
 
-	typedef actionlib::ServerGoalHandle<barrett_hand_controller_msgs::BHMoveAction> GoalHandle;
-	typedef boost::shared_ptr<const barrett_hand_controller_msgs::BHMoveGoal> Goal;
+	typedef actionlib::ServerGoalHandle<barrett_hand_action_msgs::BHMoveAction> GoalHandle;
+	typedef boost::shared_ptr<const barrett_hand_action_msgs::BHMoveGoal> Goal;
 
-	rtt_actionlib::RTTActionServer<barrett_hand_controller_msgs::BHMoveAction> as_;
+	rtt_actionlib::RTTActionServer<barrett_hand_action_msgs::BHMoveAction> as_;
 	GoalHandle active_goal_;
-	barrett_hand_controller_msgs::BHMoveFeedback feedback_;
+	barrett_hand_action_msgs::BHMoveFeedback feedback_;
 
     enum {DOFS=4};
 
@@ -88,6 +88,10 @@ private:
 	OutputPort<Joints> port_t_out_;
 	OutputPort<double> port_mp_out_;
 	OutputPort<int32_t> port_hold_out_;
+	OutputPort<uint8_t> port_reset_out_;
+
+    bool reset_active_;
+    int reset_counter_;
 
 	string prefix_;
 	map<string, int> dof_map;
@@ -104,6 +108,7 @@ public:
 		this->ports()->addPort("t_OUTPORT", port_t_out_);
 		this->ports()->addPort("mp_OUTPORT", port_mp_out_);
 		this->ports()->addPort("hold_OUTPORT", port_hold_out_);
+		this->ports()->addPort("reset_OUTPORT", port_reset_out_);
 
 		as_.addPorts(this->provides());
 		as_.registerGoalCallback(boost::bind(&BarrettHandMoveAction::goalCB, this, _1));
@@ -135,6 +140,7 @@ public:
 			feedback_.pressure_stop.resize(4);
 			feedback_.current_stop.resize(4);
 			feedback_.idle.resize(4);
+            reset_active_ = false;
 
 			return true;
 		}
@@ -163,11 +169,12 @@ public:
 
     void updateHook() {
         // ignore the status at the beginning of the movement
-        if (action_start_counter_ > 0)
+        if (action_start_counter_ > 0) {
             action_start_counter_--;
             return;
+        }
 
-		if (port_status_in_.readNewest(status_in_) == RTT::NewData && active_goal_.isValid() && (active_goal_.getGoalStatus().status == actionlib_msgs::GoalStatus::ACTIVE)) {
+		if (port_status_in_.read(status_in_) == RTT::NewData && active_goal_.isValid() && (active_goal_.getGoalStatus().status == actionlib_msgs::GoalStatus::ACTIVE)) {
 			ros::Time now = rtt_rosclock::host_now();
 
 			feedback_.header.stamp = now;
@@ -190,10 +197,20 @@ public:
 
 			active_goal_.publishFeedback(feedback_);
 
-			if (allPucksIdle(status_in_)) {
-                std::cout << "all pucks idle" << std::endl;
-				barrett_hand_controller_msgs::BHMoveResult res;
-				res.error_code = barrett_hand_controller_msgs::BHMoveResult::SUCCESSFUL;
+            if (reset_counter_ > 0) {
+                --reset_counter_;
+            }
+            else if (reset_active_) {
+                reset_active_ = false;
+				barrett_hand_action_msgs::BHMoveResult res;
+				res.error_code = barrett_hand_action_msgs::BHMoveResult::SUCCESSFUL;
+				active_goal_.setSucceeded(res);
+                return;
+            }
+
+			if (allPucksIdle(status_in_) && !reset_active_) {
+				barrett_hand_action_msgs::BHMoveResult res;
+				res.error_code = barrett_hand_action_msgs::BHMoveResult::SUCCESSFUL;
 				res.torque_switch.resize(4);
 				res.pressure_stop.resize(4);
 				res.current_stop.resize(4);
@@ -216,6 +233,13 @@ public:
 
 private:
 	void goalCB(GoalHandle gh) {
+        if (reset_active_) {
+			barrett_hand_action_msgs::BHMoveResult res;
+			res.error_code = barrett_hand_action_msgs::BHMoveResult::RESET_IS_ACTIVE;
+            gh.setRejected(res);
+            return;
+        }
+
 		// cancel active goal
 		if (active_goal_.isValid() && (active_goal_.getGoalStatus().status == actionlib_msgs::GoalStatus::ACTIVE)) {
 			active_goal_.setCanceled();
@@ -223,10 +247,21 @@ private:
 
 		Goal g = gh.getGoal();
 
+        if (g->reset) {
+            uint8_t reset = 1;
+            port_reset_out_.write(reset);
+            reset_active_ = true;
+            reset_counter_ = 300;
+    		action_start_counter_ = 20;
+    		gh.setAccepted();
+    		active_goal_ = gh;
+            return;
+        }
+
 		if (g->name.size() != DOFS || g->q.size() != DOFS || g->v.size() != DOFS || g->t.size() != DOFS)
 		{
-			barrett_hand_controller_msgs::BHMoveResult res;
-			res.error_code = barrett_hand_controller_msgs::BHMoveResult::INVALID_GOAL;
+			barrett_hand_action_msgs::BHMoveResult res;
+			res.error_code = barrett_hand_action_msgs::BHMoveResult::INVALID_GOAL;
 			gh.setRejected(res);
 			return;
 		}
@@ -234,8 +269,8 @@ private:
                 for (int i = 0; i < g->name.size(); i++) {
 			map<string, int>::iterator dof_idx_it = dof_map.find(g->name[i]);
 			if (dof_idx_it == dof_map.end()) {
-				barrett_hand_controller_msgs::BHMoveResult res;
-				res.error_code = barrett_hand_controller_msgs::BHMoveResult::INVALID_DOF_NAME;
+				barrett_hand_action_msgs::BHMoveResult res;
+				res.error_code = barrett_hand_action_msgs::BHMoveResult::INVALID_DOF_NAME;
 				gh.setRejected(res);
 				return;
 			}
