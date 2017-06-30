@@ -91,7 +91,7 @@ private:
 	OutputPort<uint8_t> port_reset_out_;
 
     bool reset_active_;
-    int reset_counter_;
+    ros::Time reset_start_time_;
 
 	string prefix_;
 	map<string, int> dof_map;
@@ -197,10 +197,7 @@ public:
 
 			active_goal_.publishFeedback(feedback_);
 
-            if (reset_counter_ > 0) {
-                --reset_counter_;
-            }
-            else if (reset_active_) {
+            if (reset_active_ && (rtt_rosclock::host_now()-reset_start_time_).toSec() > 4.0) {
                 reset_active_ = false;
 				barrett_hand_action_msgs::BHMoveResult res;
 				res.error_code = barrett_hand_action_msgs::BHMoveResult::SUCCESSFUL;
@@ -251,7 +248,7 @@ private:
             uint8_t reset = 1;
             port_reset_out_.write(reset);
             reset_active_ = true;
-            reset_counter_ = 300;
+            reset_start_time_ = rtt_rosclock::host_now();
     		action_start_counter_ = 20;
     		gh.setAccepted();
     		active_goal_ = gh;
