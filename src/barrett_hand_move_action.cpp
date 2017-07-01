@@ -28,10 +28,10 @@
 #include "barrett_hand_action_msgs/BHMoveAction.h"
 #include "barrett_hand_action_msgs/BHMoveGoal.h"
 
-#include <rtt/TaskContext.hpp>
-#include <rtt/Port.hpp>
 #include <rtt/RTT.hpp>
 #include <rtt/Component.hpp>
+#include <rtt/Logger.hpp>
+
 #include <ros/ros.h>
 #include "rtt_actionlib/rtt_actionlib.h"
 #include "rtt_actionlib/rtt_action_server.h"
@@ -170,6 +170,7 @@ public:
     void updateHook() {
         // ignore the status at the beginning of the movement
         if (action_start_counter_ > 0) {
+//            RTT::log(RTT::Info) << getName() << " action_start_counter: " << action_start_counter_ << RTT::endlog();
             action_start_counter_--;
             return;
         }
@@ -202,6 +203,7 @@ public:
 				barrett_hand_action_msgs::BHMoveResult res;
 				res.error_code = barrett_hand_action_msgs::BHMoveResult::SUCCESSFUL;
 				active_goal_.setSucceeded(res);
+//                RTT::log(RTT::Info) << getName() << " reset action finished" << RTT::endlog();
                 return;
             }
 
@@ -224,7 +226,11 @@ public:
 				res.current_stop[2] = ((status_in_ & STATUS_OVERCURRENT3) != 0);
 				res.current_stop[3] = ((status_in_ & STATUS_OVERCURRENT4) != 0);
 				active_goal_.setSucceeded(res);
+//                RTT::log(RTT::Info) << getName() << " action finished" << RTT::endlog();
 			}
+            else {
+//                RTT::log(RTT::Info) << getName() << " action continues" << RTT::endlog();
+            }
 		}
 	}
 
