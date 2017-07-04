@@ -92,11 +92,10 @@ private:
 
     bool reset_active_;
     ros::Time reset_start_time_;
+    ros::Time move_start_time_;
 
 	string prefix_;
 	map<string, int> dof_map;
-
-	int action_start_counter_;
 
 public:
 	explicit BarrettHandMoveAction(const string& name):
@@ -151,7 +150,6 @@ public:
 
 	// RTT start hook
 	bool startHook() {
-		action_start_counter_ = 0;
 		if (as_.ready()) {
 			as_.start();
 		} else {
@@ -168,14 +166,10 @@ public:
 	}
 
     void updateHook() {
-        // ignore the status at the beginning of the movement
-        if (action_start_counter_ > 0) {
-//            RTT::log(RTT::Info) << getName() << " action_start_counter: " << action_start_counter_ << RTT::endlog();
-            action_start_counter_--;
-            return;
-        }
-
-		if (port_status_in_.read(status_in_) == RTT::NewData && active_goal_.isValid() && (active_goal_.getGoalStatus().status == actionlib_msgs::GoalStatus::ACTIVE)) {
+		if ( port_status_in_.read(status_in_) == RTT::NewData &&
+                (rtt_rosclock::host_now()-move_start_time_).toSec() > 0.5 &&
+                active_goal_.isValid() &&
+                (active_goal_.getGoalStatus().status == actionlib_msgs::GoalStatus::ACTIVE) ) {
 			ros::Time now = rtt_rosclock::host_now();
 
 			feedback_.header.stamp = now;
@@ -203,7 +197,6 @@ public:
 				barrett_hand_action_msgs::BHMoveResult res;
 				res.error_code = barrett_hand_action_msgs::BHMoveResult::SUCCESSFUL;
 				active_goal_.setSucceeded(res);
-//                RTT::log(RTT::Info) << getName() << " reset action finished" << RTT::endlog();
                 return;
             }
 
@@ -226,11 +219,7 @@ public:
 				res.current_stop[2] = ((status_in_ & STATUS_OVERCURRENT3) != 0);
 				res.current_stop[3] = ((status_in_ & STATUS_OVERCURRENT4) != 0);
 				active_goal_.setSucceeded(res);
-//                RTT::log(RTT::Info) << getName() << " action finished" << RTT::endlog();
 			}
-            else {
-//                RTT::log(RTT::Info) << getName() << " action continues" << RTT::endlog();
-            }
 		}
 	}
 
@@ -255,7 +244,7 @@ private:
             port_reset_out_.write(reset);
             reset_active_ = true;
             reset_start_time_ = rtt_rosclock::host_now();
-    		action_start_counter_ = 20;
+            move_start_time_ = rtt_rosclock::host_now();
     		gh.setAccepted();
     		active_goal_ = gh;
             return;
@@ -291,7 +280,7 @@ private:
 		port_hold_out_.write(hold_out_);
 		port_q_out_.write(q_out_);
 
-		action_start_counter_ = 20;
+        move_start_time_ = rtt_rosclock::host_now();
 		gh.setAccepted();
 		active_goal_ = gh;
 	}
