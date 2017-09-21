@@ -37,10 +37,3 @@ orocos_generate_package(
   DEPENDS rtt_ros geometry_msgs std_msgs message_runtime rtt_roscomm
 )
 
-install(DIRECTORY launch/
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
-  )
-
-install(DIRECTORY worlds/
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/worlds
-  )
