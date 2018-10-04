@@ -53,6 +53,8 @@
 using std::string;
 using std::map;
 
+using namespace RTT;
+
 using RTT::InputPort;
 using RTT::OutputPort;
 
@@ -144,7 +146,7 @@ public:
 			return true;
 		}
 
-		std::cout << "ERROR: BarrettHandMoveAction: no prefix" << std::endl;
+		Logger::log() << Logger::Error << "BarrettHandMoveAction: no prefix" << Logger::endl;
 		return false;
 	}
 
