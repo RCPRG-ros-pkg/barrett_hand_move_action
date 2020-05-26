@@ -1,7 +1,7 @@
 /*
  Copyright (c) 2014, Robot Control and Pattern Recognition Group, Warsaw University of Technology
  All rights reserved.
- 
+
  Redistribution and use in source and binary forms, with or without
  modification, are permitted provided that the following conditions are met:
      * Redistributions of source code must retain the above copyright
@@ -12,7 +12,7 @@
      * Neither the name of the Warsaw University of Technology nor the
        names of its contributors may be used to endorse or promote products
        derived from this software without specific prior written permission.
- 
+
  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -260,7 +260,8 @@ private:
 			return;
 		}
 
-                for (int i = 0; i < g->name.size(); i++) {
+        for (int i = 0; i < g->name.size(); i++)
+        {
 			map<string, int>::iterator dof_idx_it = dof_map.find(g->name[i]);
 			if (dof_idx_it == dof_map.end()) {
 				barrett_hand_action_msgs::BHMoveResult res;
@@ -268,6 +269,7 @@ private:
 				gh.setRejected(res);
 				return;
 			}
+
 			q_out_[dof_idx_it->second] = g->q[i];
 			v_out_[dof_idx_it->second] = g->v[i];
 			t_out_[dof_idx_it->second] = g->t[i];
@@ -293,5 +295,5 @@ private:
 		}
 	}
 };
-ORO_CREATE_COMPONENT(BarrettHandMoveAction)
 
+ORO_CREATE_COMPONENT(BarrettHandMoveAction)
