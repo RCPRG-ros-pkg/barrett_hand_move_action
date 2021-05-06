@@ -2,7 +2,11 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(barrett_hand_move_action)
 
-find_package(catkin REQUIRED COMPONENTS rtt_ros cmake_modules barrett_hand_action_msgs)
+find_package(catkin REQUIRED COMPONENTS
+    cmake_modules
+    rtt_ros
+    barrett_hand_action_msgs
+    fabric_logger)
 
 find_package(orocos_kdl REQUIRED)
 find_package(Eigen3 REQUIRED)

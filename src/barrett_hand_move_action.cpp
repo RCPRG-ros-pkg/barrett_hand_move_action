@@ -58,242 +58,288 @@ using namespace RTT;
 using RTT::InputPort;
 using RTT::OutputPort;
 
+#include "fabric_logger/fabric_logger.h"
+
+using fabric_logger::FabricLoggerInterfaceRtPtr;
+using fabric_logger::FabricLogger;
+
 class BarrettHandMoveAction : public RTT::TaskContext {
 private:
-	enum {STATUS_OVERCURRENT1 = 0x0001, STATUS_OVERCURRENT2 = 0x0002, STATUS_OVERCURRENT3 = 0x0004, STATUS_OVERCURRENT4 = 0x0008,
-		STATUS_OVERPRESSURE1 = 0x0010, STATUS_OVERPRESSURE2 = 0x0020, STATUS_OVERPRESSURE3 = 0x0040,
-		STATUS_TORQUESWITCH1 = 0x0100, STATUS_TORQUESWITCH2 = 0x0200, STATUS_TORQUESWITCH3 = 0x0400,
-		STATUS_IDLE1 = 0x1000, STATUS_IDLE2 = 0x2000, STATUS_IDLE3 = 0x4000, STATUS_IDLE4 = 0x8000 };
+    enum {STATUS_OVERCURRENT1 = 0x0001, STATUS_OVERCURRENT2 = 0x0002, STATUS_OVERCURRENT3 = 0x0004, STATUS_OVERCURRENT4 = 0x0008,
+        STATUS_OVERPRESSURE1 = 0x0010, STATUS_OVERPRESSURE2 = 0x0020, STATUS_OVERPRESSURE3 = 0x0040,
+        STATUS_TORQUESWITCH1 = 0x0100, STATUS_TORQUESWITCH2 = 0x0200, STATUS_TORQUESWITCH3 = 0x0400,
+        STATUS_IDLE1 = 0x1000, STATUS_IDLE2 = 0x2000, STATUS_IDLE3 = 0x4000, STATUS_IDLE4 = 0x8000 };
 
-	typedef actionlib::ServerGoalHandle<barrett_hand_action_msgs::BHMoveAction> GoalHandle;
-	typedef boost::shared_ptr<const barrett_hand_action_msgs::BHMoveGoal> Goal;
+    typedef actionlib::ServerGoalHandle<barrett_hand_action_msgs::BHMoveAction> GoalHandle;
+    typedef boost::shared_ptr<const barrett_hand_action_msgs::BHMoveGoal> Goal;
 
-	rtt_actionlib::RTTActionServer<barrett_hand_action_msgs::BHMoveAction> as_;
-	GoalHandle active_goal_;
-	barrett_hand_action_msgs::BHMoveFeedback feedback_;
+    rtt_actionlib::RTTActionServer<barrett_hand_action_msgs::BHMoveAction> as_;
+    GoalHandle active_goal_;
+    barrett_hand_action_msgs::BHMoveFeedback feedback_;
 
     enum {DOFS=4};
 
     typedef Eigen::Matrix<double, DOFS, 1> Joints;
 
-	Joints q_out_;
-	Joints v_out_;
-	Joints t_out_;
-	double mp_out_;
-	int32_t hold_out_;
+    uint32_t status_in_;
+    InputPort<uint32_t> port_status_in_;
 
-	uint32_t status_in_;
-	InputPort<uint32_t> port_status_in_;
-
-	OutputPort<Joints> port_q_out_;
-	OutputPort<Joints> port_v_out_;
-	OutputPort<Joints> port_t_out_;
-	OutputPort<double> port_mp_out_;
-	OutputPort<int32_t> port_hold_out_;
-	OutputPort<uint8_t> port_reset_out_;
+    OutputPort<Joints> port_q_out_;
+    OutputPort<Joints> port_v_out_;
+    OutputPort<Joints> port_t_out_;
+    OutputPort<double> port_mp_out_;
+    OutputPort<int32_t> port_hold_out_;
+    OutputPort<uint8_t> port_reset_out_;
 
     bool reset_active_;
     ros::Time reset_start_time_;
     ros::Time move_start_time_;
 
-	string prefix_;
-	map<string, int> dof_map;
+    bool send_commands_;
+
+    string prefix_;
+    map<string, int> dof_map_;
+
+    FabricLoggerInterfaceRtPtr m_fabric_logger;
 
 public:
-	explicit BarrettHandMoveAction(const string& name):
-		TaskContext(name, PreOperational)
-	{
-		this->ports()->addPort("status_INPORT", port_status_in_);
-		this->ports()->addPort("q_OUTPORT", port_q_out_);
-		this->ports()->addPort("v_OUTPORT", port_v_out_);
-		this->ports()->addPort("t_OUTPORT", port_t_out_);
-		this->ports()->addPort("mp_OUTPORT", port_mp_out_);
-		this->ports()->addPort("hold_OUTPORT", port_hold_out_);
-		this->ports()->addPort("reset_OUTPORT", port_reset_out_);
+    explicit BarrettHandMoveAction(const string& name)
+    : TaskContext(name, PreOperational)
+    , m_fabric_logger( FabricLogger::createNewInterfaceRt( std::string("BarrettHandMoveAction: ") + name, 10000) )
+    {
+        this->ports()->addPort("status_INPORT", port_status_in_);
+        this->ports()->addPort("q_OUTPORT", port_q_out_);
+        this->ports()->addPort("v_OUTPORT", port_v_out_);
+        this->ports()->addPort("t_OUTPORT", port_t_out_);
+        this->ports()->addPort("mp_OUTPORT", port_mp_out_);
+        this->ports()->addPort("hold_OUTPORT", port_hold_out_);
+        this->ports()->addPort("reset_OUTPORT", port_reset_out_);
 
-		as_.addPorts(this->provides());
-		as_.registerGoalCallback(boost::bind(&BarrettHandMoveAction::goalCB, this, _1));
-		as_.registerCancelCallback(boost::bind(&BarrettHandMoveAction::cancelCB, this, _1));
+        as_.addPorts(this->provides());
+        as_.registerGoalCallback(boost::bind(&BarrettHandMoveAction::goalCB, this, _1));
+        as_.registerCancelCallback(boost::bind(&BarrettHandMoveAction::cancelCB, this, _1));
 
-		this->addProperty("prefix", prefix_);
-	}
+        this->addProperty("prefix", prefix_);
+    }
 
-	~BarrettHandMoveAction() {
-	}
+    ~BarrettHandMoveAction() {
+    }
 
-	void cleanupHook() {
-	}
+    void cleanupHook() {
+    }
 
-	// RTT configure hook
-	bool configureHook() {
-		if (!prefix_.empty()) {
-			dof_map[prefix_ + "_HandFingerOneKnuckleTwoJoint"] = 0;
-			dof_map[prefix_ + "_HandFingerTwoKnuckleTwoJoint"] = 1;
-			dof_map[prefix_ + "_HandFingerThreeKnuckleTwoJoint"] = 2;
-			dof_map[prefix_ + "_HandFingerOneKnuckleOneJoint"] = 3;
+    // RTT configure hook
+    bool configureHook() {
+        if (prefix_.empty()) {
+            Logger::log() << Logger::Error << "BarrettHandMoveAction: no prefix" << Logger::endl;
+            return false;
+        }
+        // else
 
-			feedback_.name.resize(4);
-			feedback_.name[0] = prefix_ + "_HandFingerOneKnuckleTwoJoint";
-			feedback_.name[1] = prefix_ + "_HandFingerTwoKnuckleTwoJoint";
-			feedback_.name[2] = prefix_ + "_HandFingerThreeKnuckleTwoJoint";
-			feedback_.name[3] = prefix_ + "_HandFingerOneKnuckleOneJoint";
-			feedback_.torque_switch.resize(4);
-			feedback_.pressure_stop.resize(4);
-			feedback_.current_stop.resize(4);
-			feedback_.idle.resize(4);
-            reset_active_ = false;
+        dof_map_[prefix_ + "_HandFingerOneKnuckleTwoJoint"] = 0;
+        dof_map_[prefix_ + "_HandFingerTwoKnuckleTwoJoint"] = 1;
+        dof_map_[prefix_ + "_HandFingerThreeKnuckleTwoJoint"] = 2;
+        dof_map_[prefix_ + "_HandFingerOneKnuckleOneJoint"] = 3;
 
-			return true;
-		}
+        feedback_.name.resize(4);
+        feedback_.name[0] = prefix_ + "_HandFingerOneKnuckleTwoJoint";
+        feedback_.name[1] = prefix_ + "_HandFingerTwoKnuckleTwoJoint";
+        feedback_.name[2] = prefix_ + "_HandFingerThreeKnuckleTwoJoint";
+        feedback_.name[3] = prefix_ + "_HandFingerOneKnuckleOneJoint";
+        feedback_.torque_switch.resize(4);
+        feedback_.pressure_stop.resize(4);
+        feedback_.current_stop.resize(4);
+        feedback_.idle.resize(4);
+        reset_active_ = false;
+        send_commands_ = false;
 
-		Logger::log() << Logger::Error << "BarrettHandMoveAction: no prefix" << Logger::endl;
-		return false;
-	}
+        return true;
+    }
 
-	// RTT start hook
-	bool startHook() {
-		if (as_.ready()) {
-			as_.start();
-		} else {
-			return false;
-		}
-		return true;
-	}
+    // RTT start hook
+    bool startHook() {
+        if (as_.ready()) {
+            as_.start();
+        } else {
+            return false;
+        }
+        return true;
+    }
 
-	void stopHook() {
-	}
+    void stopHook() {
+    }
 
-	bool allPucksIdle(uint32_t status) {
-		return ((status & STATUS_IDLE1) != 0) && ((status & STATUS_IDLE2) != 0) && ((status & STATUS_IDLE3) != 0) && ((status & STATUS_IDLE4) != 0);
-	}
+    bool allPucksIdle(uint32_t status) {
+        return ((status & STATUS_IDLE1) != 0) && ((status & STATUS_IDLE2) != 0) && ((status & STATUS_IDLE3) != 0) && ((status & STATUS_IDLE4) != 0);
+    }
 
     void updateHook() {
-		if ( port_status_in_.read(status_in_) == RTT::NewData &&
+        if (send_commands_) {
+            send_commands_ = false;
+
+            Goal g = active_goal_.getGoal();
+
+            if (g->reset) {
+                uint8_t reset = 1;
+                port_reset_out_.write(reset);
+                reset_active_ = true;
+                reset_start_time_ = rtt_rosclock::host_now();
+                move_start_time_ = rtt_rosclock::host_now();
+            }
+            else {
+                Joints q_out;
+                Joints v_out;
+                Joints t_out;
+
+                for (int i = 0; i < g->name.size(); i++)
+                {
+                    map<string, int>::iterator dof_idx_it = dof_map_.find(g->name[i]);
+                    if (dof_idx_it == dof_map_.end()) {
+                        m_fabric_logger << "ERROR: DOF name is invalid" << FabricLogger::End();
+                        error();
+                        return;
+                    }
+
+                    q_out[dof_idx_it->second] = g->q[i];
+                    v_out[dof_idx_it->second] = g->v[i];
+                    t_out[dof_idx_it->second] = g->t[i];
+                }
+
+                double mp_out = g->maxPressure;
+                int32_t hold_out = g->hold;
+
+                port_q_out_.write(q_out);
+                port_v_out_.write(v_out);
+                port_t_out_.write(t_out);
+                port_mp_out_.write(mp_out);
+                port_hold_out_.write(hold_out);
+
+                move_start_time_ = rtt_rosclock::host_now();
+            }
+            m_fabric_logger << "sent commands" << FabricLogger::End();
+        }
+
+        if ( port_status_in_.read(status_in_) == RTT::NewData &&
                 (rtt_rosclock::host_now()-move_start_time_).toSec() > 0.5 &&
                 active_goal_.isValid() &&
                 (active_goal_.getGoalStatus().status == actionlib_msgs::GoalStatus::ACTIVE) ) {
-			ros::Time now = rtt_rosclock::host_now();
+            ros::Time now = rtt_rosclock::host_now();
 
-			feedback_.header.stamp = now;
-			feedback_.torque_switch[0] = ((status_in_ & STATUS_TORQUESWITCH1) != 0);
-			feedback_.torque_switch[1] = ((status_in_ & STATUS_TORQUESWITCH2) != 0);
-			feedback_.torque_switch[2] = ((status_in_ & STATUS_TORQUESWITCH3) != 0);
-			feedback_.torque_switch[3] = 0;
-			feedback_.pressure_stop[0] = ((status_in_ & STATUS_OVERPRESSURE1) != 0);
-			feedback_.pressure_stop[1] = ((status_in_ & STATUS_OVERPRESSURE2) != 0);
-			feedback_.pressure_stop[2] = ((status_in_ & STATUS_OVERPRESSURE3) != 0);
-			feedback_.pressure_stop[3] = 0;
-			feedback_.current_stop[0] = ((status_in_ & STATUS_OVERCURRENT1) != 0);
-			feedback_.current_stop[1] = ((status_in_ & STATUS_OVERCURRENT2) != 0);
-			feedback_.current_stop[2] = ((status_in_ & STATUS_OVERCURRENT3) != 0);
-			feedback_.current_stop[3] = ((status_in_ & STATUS_OVERCURRENT4) != 0);
-			feedback_.idle[0] = ((status_in_ & STATUS_IDLE1) != 0);
-			feedback_.idle[1] = ((status_in_ & STATUS_IDLE2) != 0);
-			feedback_.idle[2] = ((status_in_ & STATUS_IDLE3) != 0);
-			feedback_.idle[3] = ((status_in_ & STATUS_IDLE4) != 0);
+            feedback_.header.stamp = now;
+            feedback_.torque_switch[0] = ((status_in_ & STATUS_TORQUESWITCH1) != 0);
+            feedback_.torque_switch[1] = ((status_in_ & STATUS_TORQUESWITCH2) != 0);
+            feedback_.torque_switch[2] = ((status_in_ & STATUS_TORQUESWITCH3) != 0);
+            feedback_.torque_switch[3] = 0;
+            feedback_.pressure_stop[0] = ((status_in_ & STATUS_OVERPRESSURE1) != 0);
+            feedback_.pressure_stop[1] = ((status_in_ & STATUS_OVERPRESSURE2) != 0);
+            feedback_.pressure_stop[2] = ((status_in_ & STATUS_OVERPRESSURE3) != 0);
+            feedback_.pressure_stop[3] = 0;
+            feedback_.current_stop[0] = ((status_in_ & STATUS_OVERCURRENT1) != 0);
+            feedback_.current_stop[1] = ((status_in_ & STATUS_OVERCURRENT2) != 0);
+            feedback_.current_stop[2] = ((status_in_ & STATUS_OVERCURRENT3) != 0);
+            feedback_.current_stop[3] = ((status_in_ & STATUS_OVERCURRENT4) != 0);
+            feedback_.idle[0] = ((status_in_ & STATUS_IDLE1) != 0);
+            feedback_.idle[1] = ((status_in_ & STATUS_IDLE2) != 0);
+            feedback_.idle[2] = ((status_in_ & STATUS_IDLE3) != 0);
+            feedback_.idle[3] = ((status_in_ & STATUS_IDLE4) != 0);
 
-			active_goal_.publishFeedback(feedback_);
+            active_goal_.publishFeedback(feedback_);
 
             if (reset_active_ && (rtt_rosclock::host_now()-reset_start_time_).toSec() > 4.0) {
                 reset_active_ = false;
-				barrett_hand_action_msgs::BHMoveResult res;
-				res.error_code = barrett_hand_action_msgs::BHMoveResult::SUCCESSFUL;
-				active_goal_.setSucceeded(res);
+                barrett_hand_action_msgs::BHMoveResult res;
+                res.error_code = barrett_hand_action_msgs::BHMoveResult::SUCCESSFUL;
+                active_goal_.setSucceeded(res);
                 return;
             }
 
-			if (allPucksIdle(status_in_) && !reset_active_) {
-				barrett_hand_action_msgs::BHMoveResult res;
-				res.error_code = barrett_hand_action_msgs::BHMoveResult::SUCCESSFUL;
-				res.torque_switch.resize(4);
-				res.pressure_stop.resize(4);
-				res.current_stop.resize(4);
-				res.torque_switch[0] = ((status_in_ & STATUS_TORQUESWITCH1) != 0);
-				res.torque_switch[1] = ((status_in_ & STATUS_TORQUESWITCH2) != 0);
-				res.torque_switch[2] = ((status_in_ & STATUS_TORQUESWITCH3) != 0);
-				res.torque_switch[3] = 0;
-				res.pressure_stop[0] = ((status_in_ & STATUS_OVERPRESSURE1) != 0);
-				res.pressure_stop[1] = ((status_in_ & STATUS_OVERPRESSURE2) != 0);
-				res.pressure_stop[2] = ((status_in_ & STATUS_OVERPRESSURE3) != 0);
-				res.pressure_stop[3] = 0;
-				res.current_stop[0] = ((status_in_ & STATUS_OVERCURRENT1) != 0);
-				res.current_stop[1] = ((status_in_ & STATUS_OVERCURRENT2) != 0);
-				res.current_stop[2] = ((status_in_ & STATUS_OVERCURRENT3) != 0);
-				res.current_stop[3] = ((status_in_ & STATUS_OVERCURRENT4) != 0);
-				active_goal_.setSucceeded(res);
-			}
-		}
-	}
+            if (allPucksIdle(status_in_) && !reset_active_) {
+                barrett_hand_action_msgs::BHMoveResult res;
+                res.error_code = barrett_hand_action_msgs::BHMoveResult::SUCCESSFUL;
+                res.torque_switch.resize(4);
+                res.pressure_stop.resize(4);
+                res.current_stop.resize(4);
+                res.torque_switch[0] = ((status_in_ & STATUS_TORQUESWITCH1) != 0);
+                res.torque_switch[1] = ((status_in_ & STATUS_TORQUESWITCH2) != 0);
+                res.torque_switch[2] = ((status_in_ & STATUS_TORQUESWITCH3) != 0);
+                res.torque_switch[3] = 0;
+                res.pressure_stop[0] = ((status_in_ & STATUS_OVERPRESSURE1) != 0);
+                res.pressure_stop[1] = ((status_in_ & STATUS_OVERPRESSURE2) != 0);
+                res.pressure_stop[2] = ((status_in_ & STATUS_OVERPRESSURE3) != 0);
+                res.pressure_stop[3] = 0;
+                res.current_stop[0] = ((status_in_ & STATUS_OVERCURRENT1) != 0);
+                res.current_stop[1] = ((status_in_ & STATUS_OVERCURRENT2) != 0);
+                res.current_stop[2] = ((status_in_ & STATUS_OVERCURRENT3) != 0);
+                res.current_stop[3] = ((status_in_ & STATUS_OVERCURRENT4) != 0);
+                active_goal_.setSucceeded(res);
+            }
+        }
+    }
 
 private:
-	void goalCB(GoalHandle gh) {
+    void goalCB(GoalHandle gh) {
         if (reset_active_) {
-			barrett_hand_action_msgs::BHMoveResult res;
-			res.error_code = barrett_hand_action_msgs::BHMoveResult::RESET_IS_ACTIVE;
+            barrett_hand_action_msgs::BHMoveResult res;
+            res.error_code = barrett_hand_action_msgs::BHMoveResult::RESET_IS_ACTIVE;
+            m_fabric_logger << "rejected the goal, because reset command is currently active"
+                                                                        << FabricLogger::End();
             gh.setRejected(res);
             return;
         }
 
-		// cancel active goal
-		if (active_goal_.isValid() && (active_goal_.getGoalStatus().status == actionlib_msgs::GoalStatus::ACTIVE)) {
-			active_goal_.setCanceled();
-		}
+        // cancel active goal
+        if (active_goal_.isValid() &&
+                    (active_goal_.getGoalStatus().status == actionlib_msgs::GoalStatus::ACTIVE)) {
+            active_goal_.setCanceled();
+            m_fabric_logger << "cancelled the previous goal, because the new command is received"
+                                                                            << FabricLogger::End();
+        }
 
-		Goal g = gh.getGoal();
+        Goal g = gh.getGoal();
 
         if (g->reset) {
-            uint8_t reset = 1;
-            port_reset_out_.write(reset);
-            reset_active_ = true;
-            reset_start_time_ = rtt_rosclock::host_now();
-            move_start_time_ = rtt_rosclock::host_now();
-    		gh.setAccepted();
-    		active_goal_ = gh;
+            send_commands_ = true;
+            gh.setAccepted();
+            active_goal_ = gh;
+            m_fabric_logger << "accepted the new goal: reset" << FabricLogger::End();
             return;
         }
 
-		if (g->name.size() != DOFS || g->q.size() != DOFS || g->v.size() != DOFS || g->t.size() != DOFS)
-		{
-			barrett_hand_action_msgs::BHMoveResult res;
-			res.error_code = barrett_hand_action_msgs::BHMoveResult::INVALID_GOAL;
-			gh.setRejected(res);
-			return;
-		}
+        if (g->name.size() != DOFS || g->q.size() != DOFS || g->v.size() != DOFS || g->t.size() != DOFS)
+        {
+            barrett_hand_action_msgs::BHMoveResult res;
+            res.error_code = barrett_hand_action_msgs::BHMoveResult::INVALID_GOAL;
+            gh.setRejected(res);
+            m_fabric_logger << "rejected the new goal, because it is invalid" << FabricLogger::End();
+            return;
+        }
 
         for (int i = 0; i < g->name.size(); i++)
         {
-			map<string, int>::iterator dof_idx_it = dof_map.find(g->name[i]);
-			if (dof_idx_it == dof_map.end()) {
-				barrett_hand_action_msgs::BHMoveResult res;
-				res.error_code = barrett_hand_action_msgs::BHMoveResult::INVALID_DOF_NAME;
-				gh.setRejected(res);
-				return;
-			}
+            map<string, int>::iterator dof_idx_it = dof_map_.find(g->name[i]);
+            if (dof_idx_it == dof_map_.end()) {
+                barrett_hand_action_msgs::BHMoveResult res;
+                res.error_code = barrett_hand_action_msgs::BHMoveResult::INVALID_DOF_NAME;
+                gh.setRejected(res);
+                m_fabric_logger << "rejected the new goal, because DOF name is invalid" << FabricLogger::End();
+                return;
+            }
+        }
 
-			q_out_[dof_idx_it->second] = g->q[i];
-			v_out_[dof_idx_it->second] = g->v[i];
-			t_out_[dof_idx_it->second] = g->t[i];
-		}
+        send_commands_ = true;
 
-		mp_out_ = g->maxPressure;
-		hold_out_ = g->hold;
+        gh.setAccepted();
+        active_goal_ = gh;
+        m_fabric_logger << "accepted the new goal: move hand" << FabricLogger::End();
+    }
 
-		port_v_out_.write(v_out_);
-		port_t_out_.write(t_out_);
-		port_mp_out_.write(mp_out_);
-		port_hold_out_.write(hold_out_);
-		port_q_out_.write(q_out_);
-
-        move_start_time_ = rtt_rosclock::host_now();
-		gh.setAccepted();
-		active_goal_ = gh;
-	}
-
-	void cancelCB(GoalHandle gh) {
-		if (active_goal_ == gh) {
-			active_goal_.setCanceled();
-		}
-	}
+    void cancelCB(GoalHandle gh) {
+        if (active_goal_ == gh) {
+            active_goal_.setCanceled();
+            m_fabric_logger << "cancelled the previous goal, because the cancel request is received"
+                                                                            << FabricLogger::End();
+        }
+    }
 };
 
 ORO_CREATE_COMPONENT(BarrettHandMoveAction)
