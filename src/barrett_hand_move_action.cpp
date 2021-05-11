@@ -105,7 +105,7 @@ private:
 public:
     explicit BarrettHandMoveAction(const string& name)
     : TaskContext(name, PreOperational)
-    , m_fabric_logger( FabricLogger::createNewInterfaceRt( std::string("BarrettHandMoveAction: ") + name, 10000) )
+    , m_fabric_logger( FabricLogger::createNewInterfaceRt( name, 10000) )
     {
         this->ports()->addPort("status_INPORT", port_status_in_);
         this->ports()->addPort("q_OUTPORT", port_q_out_);
