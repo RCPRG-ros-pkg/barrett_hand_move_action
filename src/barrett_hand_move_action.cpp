@@ -278,6 +278,7 @@ public:
 
 private:
     void goalCB(GoalHandle gh) {
+        m_fabric_logger << "received a new goal" << FabricLogger::End();
         if (reset_active_) {
             barrett_hand_action_msgs::BHMoveResult res;
             res.error_code = barrett_hand_action_msgs::BHMoveResult::RESET_IS_ACTIVE;
